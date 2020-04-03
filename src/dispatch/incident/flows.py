@@ -31,9 +31,9 @@ from dispatch.config import (
     INCIDENT_RESOURCE_INVESTIGATION_SHEET,
     INCIDENT_RESOURCE_NOTIFICATIONS_GROUP,
     INCIDENT_RESOURCE_TACTICAL_GROUP,
-    INCIDENT_STORAGE_ARCHIVAL_FOLDER_ID,
+    INCIDENT_STORAGE_FOLDER_ID,
+    INCIDENT_STORAGE_OPEN_ON_CLOSE,
     INCIDENT_STORAGE_INCIDENT_REVIEW_FILE_ID,
-    INCIDENT_STORAGE_RESTRICTED,
 )
 
 from dispatch.conversation import service as conversation_service
@@ -205,13 +205,8 @@ def create_conference(incident: Incident, participants: List[str]):
 def create_incident_storage(name: str, participant_group_emails: List[str]):
     """Create an external file store for incident storage."""
     p = plugins.get(INCIDENT_PLUGIN_STORAGE_SLUG)
-    storage = p.create(name, participant_group_emails)
+    storage = p.create_file(INCIDENT_STORAGE_FOLDER_ID, name, participant_group_emails)
     storage.update({"resource_type": INCIDENT_PLUGIN_STORAGE_SLUG, "resource_id": storage["id"]})
-
-    if INCIDENT_STORAGE_RESTRICTED:
-        p.restrict(storage["resource_id"])
-        log.debug("The incident storage has been restricted.")
-
     return storage
 
 
@@ -703,16 +698,17 @@ def incident_closed_flow(incident_id: int, command: Optional[dict] = None, db_se
     log.debug(f"We have updated the status of the external ticket to {IncidentStatus.closed}.")
 
     if incident.visibility == Visibility.open:
-        # we archive the artifacts in the storage
-        storage_plugin = plugins.get(INCIDENT_PLUGIN_STORAGE_SLUG)
-        storage_plugin.archive(
-            source_team_drive_id=incident.storage.resource_id,
-            dest_team_drive_id=INCIDENT_STORAGE_ARCHIVAL_FOLDER_ID,
-            folder_name=incident.name,
-        )
-        log.debug(
-            "We have archived the incident artifacts in the archival folder and re-applied permissions and deleted the source."
-        )
+
+        # open file to domain on closure
+        if INCIDENT_STORAGE_OPEN_ON_CLOSE:
+            # we archive the artifacts in the storage
+            storage_plugin = plugins.get(INCIDENT_PLUGIN_STORAGE_SLUG)
+            storage_plugin.archive(
+                folder_id=incident.storage.resource_id,
+            )
+            log.debug(
+                "We have archived the incident artifacts."
+            )
 
         # we get the tactical group
         tactical_group = group_service.get_by_incident_id_and_resource_type(
